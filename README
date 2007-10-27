@@ -1,0 +1,24 @@
+######################################################################
+    Archive::Tar::Merge 0.01
+######################################################################
+
+NAME
+    Archive::Tar::Merge - blah blah blah
+
+SYNOPSIS
+        use Archive::Tar::Merge;
+
+DESCRIPTION
+    Archive::Tar::Merge blah blah blah.
+
+EXAMPLES
+      $ perl -MArchive::Tar::Merge -le 'print $foo'
+
+LEGALESE
+    Copyright 2007 by Mike Schilli, all rights reserved. This program is
+    free software, you can redistribute it and/or modify it under the same
+    terms as Perl itself.
+
+AUTHOR
+    2007, Mike Schilli <cpan@perlmeister.com>
+
