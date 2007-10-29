@@ -153,12 +153,12 @@ C<Archive::Tar::Merge> takes two or more tarballs, merges their files
 and writes the resulting directory/file structure out to a destination
 tarball.
 
-In the easiest case, there's no overlap between files and the resulting
-tarball is just a union of all files in all source tarballs.
+In the easiest case, there's no overlap between files. Then
+the result is just a union of all files in all source tarballs.
 
 If there's overlap, but the overlapping files are identical in the source
 and destination tarballs, there's no conflict and C<Archive::Tar::Merge>
-just puts the file into the destination tarball without further ado.
+just puts the files into the destination tarball without further ado.
 
 =head2 Deciders
 
@@ -186,9 +186,10 @@ will pick the second one.
 
 =item *
 
-Return the content of the winning file. Typically, the decider applies
+Return the content of the winning file. How it comes up with this content
+is up to the decider, typically, it applies
 a filter to one or more of the source files, derives the content of the
-destination file and returns its content as a string.
+destination file from them and returns its content as a string.
 
     return { content => "content of destination file" }
 
@@ -207,7 +208,7 @@ Throw an error:
 =back
 
 As parameters, the decider receives the file's logical source path in the
-tarball and a list of paths to the source file candidates. Here's an
+tarball and a list of paths to the unpacked source file candidates. Here's an
 example of a decider that resolves conflicts by prioritizing files from
 the second source tarball (C<b.tgz>):
 
@@ -222,14 +223,31 @@ the second source tarball (C<b.tgz>):
     sub decider {
         my($logical_src_path, @candidate_phyical_paths) = @_;
           
-          # Return the index of the last candidate
+          # Always return the index of the last candidate
         return { index => $candidate_pysical_paths[-1] };
     }
 
     $merger->merge();
 
-If the decider wants to make a decision based on the content of one or 
-more of the source files, it has to open and read them.
+If a decider wants to make a decision based on the content of one or 
+more of the source files, it has to open and read them. A somewhat
+contrived example would be a decider which appends the content of all
+conflicting source files and adds them under the given logical path
+to the destination tarball:
+
+    use File::Slurp;
+
+    sub decider {
+        my($logical_src_path, @candidate_phyical_paths) = @_;
+          
+        my $content;
+
+        for my $path (@candidate_phyical_paths) {
+            $content .= read_file($path);
+        }
+
+        return { content => $content };
+    }
 
 =head2 Hooks
 
@@ -255,12 +273,10 @@ modify their content, or store them under a different location.
         return { action => "ignore" };
     }
 
-Just like deciders, filters receive the file's logical source path in the
+Just like deciders, hooks receive the file's logical source path in the
 tarball and a list of paths to the source file candidates.
-Filters I<differ> from hooks in that they are called with I<every> file
-that is merged and not just with overlapping files.
-
-
+Hooks I<differ> from deciders in that they are called with I<every> file
+that is merged and not just with conflicting files.
 
 =head1 TODO
 
