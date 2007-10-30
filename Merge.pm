@@ -5,6 +5,9 @@ package Archive::Tar::Merge;
 use strict;
 use warnings;
 use Archive::Tar::Wrapper;
+use File::Temp qw(tempdir);
+use Log::Log4perl qw(:easy);
+use File::Spec::Functions;
 
 our $VERSION = "0.01";
 
@@ -23,6 +26,28 @@ sub new {
     bless $self, $class;
 }
 
+###########################################
+sub unpack_sources {
+###########################################
+    my($self) = @_; 
+
+    for my $source_tarball (@{ $self->{source_tarballs} }) {
+        my($tmpdir) = tempdir(CLEANUP => 1);
+
+        my %source = ();
+
+        $source{dir} = $tmpdir;
+
+        my $arch = Archive::Tar::Wrapper->new(tmpdir => $tmpdir);
+        $arch->read($source_tarball);
+
+        $source{archive} = $arch;
+        $source{tarball} = $source_tarball;
+
+        push @{ $self->{sources} }, \%source;
+    }
+}
+
 ######################################
 sub merge {
 ######################################
@@ -30,10 +55,13 @@ sub merge {
 
     my @merged_files = ();
 
-    DEBUG "Merging ", join(', ', @{$p{source_tarballs}}),
-          " into $p{dest_tarball}";
+    my $out_dir = tempdir(CLEANUP => 1);
+
+    DEBUG "Merging ", join(', ', @{ $self->{source_tarballs} }),
+          " into $self->{dest_tarball}";
 
     my $paths     = {};
+
         # Build the following data structure:
         # rel/path1:
         #   digests => digest1 => abs/path1
@@ -43,21 +71,26 @@ sub merge {
         #   digests => digest3 => abs/path3
         #   paths   => [abs/path3]
         # ...
-
-    for my $dir (@{$p{source_dirs}}) {
+    for my $source (@{ $self->{sources} }) {
+        my $dir = $source->{dir};
         find(sub {
             return unless -f;
             my $rel = abs2rel($File::Find::name, $dir);
 
-            if(! $p{filter}->($rel, $File::Find::name)) {
-                DEBUG "$rel: Blocked by filter";
-                return;
+            # Hook
+            if(defined $self->{hook}) {
+                if(! $self->{hook}->($File::Find::name, $rel, $source)) {
+                    DEBUG "$rel: Blocked by hook";
+                    return;
+                }
             }
 
-            my $digest = md5me($File::Find::name);
+            my $digest = file_hash($File::Find::name);
     
+              # avoid autovivification
             if(!exists $paths->{$rel} or
                !exists $paths->{$rel}->{digests}->{$digest}) {
+                  # create the data structure shown above
                 $paths->{$rel}->{digests}->{$digest} = $File::Find::name;
                 push @{$paths->{$rel}->{paths}}, $File::Find::name;
             }
@@ -67,64 +100,88 @@ sub merge {
         # Traverse and figure out conflicts
     for my $relpath (keys %$paths) {
 
-        my $target_dir = "$p{target_dir}/" . dirname($relpath);
-        my @digests    = keys %{$paths->{$relpath}->{digests}};
+        my $dst_dir = File::Spec->catfile($out_dir, dirname($relpath));
+        my @digests = keys %{$paths->{$relpath}->{digests}};
     
-        mkd $target_dir unless -d $target_dir;
+        my $dst_entry = File::Spec->catfile($dst_dir,
+                                               basename($relpath));
+        my $dst_content;
 
-            # The *last* src wins by default
-        my $src = $paths->{$relpath}->{paths}->[-1];
+        mkd $dst_dir unless -d $dst_dir;
 
-        my $dst = $target_dir . "/" . basename($src);
+        my $src_entry = $paths->{$relpath}->{paths}->[0];
+
+        if(-l $src_entry) {
+              # It's a symlink!
+            DEBUG "Symlinking $src_entry to $dst_entry";
+            symlink(readlink($src_entry), $dst_entry) or
+                LOGDIE("symlinking $dst_entry failed: $!");
+            next;
+        }
 
         if(@digests == 1) {
             # A unique file. Take it as-is
 
         } else {
-            ERROR "C $relpath";
-            for my $digest (@digests) {
-                ERROR "  $paths->{$relpath}->{digests}->{$digest}";
-            }
-            if($p{force}) {
-                ERROR "Resolved with force";
-            } else {
-                my $src =
-                  pick("Pick the winner", [
-                    @{$paths->{$relpath}->{paths}} ],
-                    scalar @{$paths->{$relpath}->{paths}});
+
+              # Several different versions of the file, call the
+              # decider to pick one
+            if(defined $self->{decider}) {
+                my $decision = $self->{decider}->(
+                    $relpath, 
+                    @{ $paths->{$relpath}->{paths} },
+                );
+
+                if(0) {
+                } elsif(defined $decision->{action}) {
+                    if($decision->{action} eq "ignore") {
+                        DEBUG "Ignoring $relpath per decider";
+                        next;
+                    } else {
+                        LOGDIE "Unknown action from decider: ",
+                               "$decision->{action}";
+                    }
+                } elsif(defined $decision->{index}) {
+                    $src_entry = 
+                        $paths->{$relpath}->{paths}->[ $decision->{index} ];
+
+                } elsif(defined $decision->{content}) {
+                    $dst_content = $decision->{content};
+                } else {
+                    LOGDIE "Decider failed to return decision";
+                }
             }
         }
 
-        if(-l $src) {
-            # It's a symlink!
-            DEBUG "Symlinking $src to $dst";
-            symlink(readlink($src), $dst) or
-                LOGDIE("symlinking $dst failed: $!");
+        if(defined $dst_content) {
+            blurt($dst_content, $dst_entry);
         } else {
-            cp($src, $dst);
+            cp($src_entry, $dst_entry);
                 # File::Copy doesn't copy permissions correctly, fix that.
-            perm_cp($src, $dst);
+            perm_cp($src_entry, $dst_entry);
         }
 
-        push @merged_files, $dst;
+        push @merged_files, $dst_entry;
     }
 
     return \@merged_files;
 }
 
 ######################################
-sub md5me {
+sub file_hash {
 ######################################
     my($filename) = @_; 
 
     open FH, "<$filename" or LOGDIE "Cannot open $filename";
-    local $/ = undef;
-    my $data = <FH>;
-    my $digest = md5_hex($data);
+
+    my $ctx = Digest::MD5->new();
+    $ctx->addfile(*FH);
+    my $digest = $ctx->hexdigest;
+
     close FH;
+
     return $digest;
 }
-
 
 1;
 
@@ -221,7 +278,7 @@ the second source tarball (C<b.tgz>):
       # If there's a conflict, let the source file of the
       # last candidate win.
     sub decider {
-        my($logical_src_path, @candidate_phyical_paths) = @_;
+        my($logical_src_path, @candidate_physical_paths) = @_;
           
           # Always return the index of the last candidate
         return { index => $candidate_pysical_paths[-1] };
@@ -238,11 +295,11 @@ to the destination tarball:
     use File::Slurp;
 
     sub decider {
-        my($logical_src_path, @candidate_phyical_paths) = @_;
+        my($logical_src_path, @candidate_physical_paths) = @_;
           
         my $content;
 
-        for my $path (@candidate_phyical_paths) {
+        for my $path (@candidate_physical_paths) {
             $content .= read_file($path);
         }
 
@@ -267,7 +324,7 @@ modify their content, or store them under a different location.
         my($logical_src_path, @candidate_paths) = @_;
           
         if($logical_src_path =~ /^bin/) {
-            return { action => "keep" };
+            return { action => "first" };
         }
 
         return { action => "ignore" };
@@ -282,6 +339,8 @@ that is merged and not just with conflicting files.
 
 * Copy directories?
 * First decider, then hook?
+* What if an entry is a symlink in one tarball and a file in another?
+* Permissions of target files created by content
 
 =head1 LEGALESE
 
