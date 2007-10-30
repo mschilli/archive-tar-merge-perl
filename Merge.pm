@@ -7,7 +7,12 @@ use warnings;
 use Archive::Tar::Wrapper;
 use File::Temp qw(tempdir);
 use Log::Log4perl qw(:easy);
-use File::Spec::Functions;
+use File::Spec::Functions qw(abs2rel);
+use File::Spec;
+use File::Find;
+use Digest::MD5;
+use File::Basename;
+use Sysadm::Install qw(mkd);
 
 our $VERSION = "0.01";
 
@@ -23,7 +28,20 @@ sub new {
         %options,
     };
 
+    if(@{ $self->{source_tarballs} } == 0) {
+        LOGDIE "Need at least one tarball to merge";
+    }
+
+    for my $tarball (@{ $self->{source_tarballs} }) {
+        if(! -f $tarball) {
+            LOGDIE "Tarball not found: $tarball";
+        }
+    }
+
     bless $self, $class;
+
+    $self->unpack_sources();
+    return $self;
 }
 
 ###########################################
@@ -53,9 +71,8 @@ sub merge {
 ######################################
     my($self) = @_; 
 
-    my @merged_files = ();
-
     my $out_dir = tempdir(CLEANUP => 1);
+    my $out_tar = Archive::Tar::Wrapper->new(tmpdir => $out_dir);
 
     DEBUG "Merging ", join(', ', @{ $self->{source_tarballs} }),
           " into $self->{dest_tarball}";
@@ -76,6 +93,8 @@ sub merge {
         find(sub {
             return unless -f;
             my $rel = abs2rel($File::Find::name, $dir);
+              # Two down
+            $rel =~ s#.*?/.*?/##;
 
             # Hook
             if(defined $self->{hook}) {
@@ -104,7 +123,7 @@ sub merge {
         my @digests = keys %{$paths->{$relpath}->{digests}};
     
         my $dst_entry = File::Spec->catfile($dst_dir,
-                                               basename($relpath));
+                                            basename($relpath));
         my $dst_content;
 
         mkd $dst_dir unless -d $dst_dir;
@@ -112,7 +131,6 @@ sub merge {
         my $src_entry = $paths->{$relpath}->{paths}->[0];
 
         if(-l $src_entry) {
-              # It's a symlink!
             DEBUG "Symlinking $src_entry to $dst_entry";
             symlink(readlink($src_entry), $dst_entry) or
                 LOGDIE("symlinking $dst_entry failed: $!");
@@ -150,21 +168,23 @@ sub merge {
                 } else {
                     LOGDIE "Decider failed to return decision";
                 }
+            } else {
+                LOGDIE "Conflict: $relpath (and no decider defined)";
             }
         }
 
         if(defined $dst_content) {
-            blurt($dst_content, $dst_entry);
+            $out_tar->add($relpath, \$dst_content);
         } else {
-            cp($src_entry, $dst_entry);
-                # File::Copy doesn't copy permissions correctly, fix that.
-            perm_cp($src_entry, $dst_entry);
+            $out_tar->add($relpath, $src_entry);
         }
-
-        push @merged_files, $dst_entry;
     }
 
-    return \@merged_files;
+    my $compress = 0;
+    if($self->{dest_tarball} =~ /gz$/) {
+        $compress = 1;
+    }
+    return $out_tar->write($self->{dest_tarball}, $compress);
 }
 
 ######################################
@@ -341,6 +361,7 @@ that is merged and not just with conflicting files.
 * First decider, then hook?
 * What if an entry is a symlink in one tarball and a file in another?
 * Permissions of target files created by content
+* N different symlinks (hash dst file)
 
 =head1 LEGALESE
 
