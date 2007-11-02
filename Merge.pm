@@ -98,9 +98,25 @@ sub merge {
 
             # Hook
             if(defined $self->{hook}) {
-                if(! $self->{hook}->($File::Find::name, $rel, $source)) {
-                    DEBUG "$rel: Blocked by hook";
-                    return;
+
+                my $hook = $self->{hook}->(
+                        $File::Find::name, 
+                        $rel, 
+                        $source);
+
+                if(0) {
+                } elsif(defined $decision->{action}) {
+                    if($decision->{action} eq "ignore") {
+                        DEBUG "Ignoring $relpath per decider";
+                        next;
+                    } else {
+                        LOGDIE "Unknown action from hook: ",
+                               "$hook->{action}";
+                    }
+                } elsif(defined $decision->{content}) {
+                    $dst_content = $decision->{content};
+                } else {
+                    LOGDIE "Decider failed to return decision";
                 }
             }
 
@@ -147,7 +163,8 @@ sub merge {
             if(defined $self->{decider}) {
                 my $decision = $self->{decider}->(
                     $relpath, 
-                    @{ $paths->{$relpath}->{paths} },
+                    $paths->{$relpath}->{paths},
+                    $out_tar,
                 );
 
                 if(0) {
@@ -184,7 +201,10 @@ sub merge {
     if($self->{dest_tarball} =~ /gz$/) {
         $compress = 1;
     }
-    return $out_tar->write($self->{dest_tarball}, $compress);
+
+    $out_tar->write($self->{dest_tarball}, $compress);
+
+    return $out_tar;
 }
 
 ######################################
@@ -298,10 +318,10 @@ the second source tarball (C<b.tgz>):
       # If there's a conflict, let the source file of the
       # last candidate win.
     sub decider {
-        my($logical_src_path, @candidate_physical_paths) = @_;
+        my($logical_src_path, $candidate_physical_paths) = @_;
           
           # Always return the index of the last candidate
-        return { index => $candidate_pysical_paths[-1] };
+        return { index => $candidate_pysical_paths->[-1] };
     }
 
     $merger->merge();
@@ -315,16 +335,25 @@ to the destination tarball:
     use File::Slurp;
 
     sub decider {
-        my($logical_src_path, @candidate_physical_paths) = @_;
+        my($logical_src_path, $candidate_physical_paths) = @_;
           
         my $content;
 
-        for my $path (@candidate_physical_paths) {
+        for my $path (@$candidate_physical_paths) {
             $content .= read_file($path);
         }
 
         return { content => $content };
     }
+
+A decider receives a reference to the outgoing C<Archive::Tar::Wrapper>
+object as a third parameter:
+
+    sub decider {
+        my($logical_src_path, $candidate_physical_paths, $out_tar) = @_;
+
+This allows for adding extra files to the outgoing tarball and 
+perform all kinds of scary manipulations.
 
 =head2 Hooks
 
@@ -341,19 +370,56 @@ modify their content, or store them under a different location.
 
       # Keep only "bin/*" files
     sub hook {
-        my($logical_src_path, @candidate_paths) = @_;
+        my($logical_src_path, $candidate_paths) = @_;
           
         if($logical_src_path =~ /^bin/) {
-            return { action => "first" };
+              # keep
+            return undef;
         }
 
         return { action => "ignore" };
     }
 
 Just like deciders, hooks receive the file's logical source path in the
-tarball and a list of paths to the source file candidates.
+tarball and a reference to an array of paths to the source file candidates.
 Hooks I<differ> from deciders in that they are called with I<every> file
 that is merged and not just with conflicting files.
+
+If a merger defines both a decider and a hook, in case of a conflict,
+it will <only> call the decider. It doesn't make sense to call the hook
+in this case because the decider already had the opportunity to totally
+render the content of the file itself, making things like source paths 
+useless.
+
+If a hook returns C<undef>, the file will be kept unmodified. On
+
+        return { action => "ignore" };
+
+the file will be ignored. And a hook can, just like a decider, filter
+the original file or create its content from scratch by using the
+C<content> parameter.
+
+A hook also receives a reference to the outgoing C<Archive::Tar::Wrapper>
+object.
+
+=head2 Post-processing the outgoing tarball
+
+The C<merge()> method not only merges the source tarballs and writes
+the result into the outgoing tarfile, but also maintains a 
+C<Archive::Tar::Wrapper> object of the result. A reference to it
+is returned by every successful call of C<merge()>:
+
+     my $out_tar = $merger->merge();
+
+It may be used for post-processing the tarball by adding additional 
+files or perform closing manipulations. After modifying the 
+C<Archive::Tar::Wrapper>, a new tarball can be written by calling
+the C<write()> method:
+
+    $out_tar->write($tarfile, $compressed);
+
+For more info on what to do with the C<Archive::Tar::Wrapper> object,
+read its documentation.
 
 =head1 TODO
 
