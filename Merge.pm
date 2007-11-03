@@ -315,7 +315,7 @@ the second source tarball (C<b.tgz>):
         my($logical_src_path, $candidate_physical_paths) = @_;
           
           # Always return the index of the last candidate
-        return { index => $candidate_pysical_paths->[-1] };
+        return { index => "-1" };
     }
 
     $merger->merge();
