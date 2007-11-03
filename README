@@ -13,9 +13,7 @@ SYNOPSIS
             dest_tarball    => "c.tgz"
         );
 
-        if(! $merger->merge()) {
-            print "Merge failed: ", $merger->error(), "\n";
-        }
+        $merger->merge();
 
 DESCRIPTION
     "Archive::Tar::Merge" takes two or more tarballs, merges their files and
@@ -60,10 +58,6 @@ DESCRIPTION
     *   Ignore the file. Leave it out of the destination tarball:
 
             return { action => "ignore" };
-
-    *   Throw an error:
-
-            return { action => "error" };
 
     As parameters, the decider receives the file's logical source path in
     the tarball and a list of paths to the unpacked source file candidates.

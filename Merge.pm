@@ -242,9 +242,7 @@ Archive::Tar::Merge - Merge two or more tarballs into one
         dest_tarball    => "c.tgz"
     );
 
-    if(! $merger->merge()) {
-        print "Merge failed: ", $merger->error(), "\n";
-    }
+    $merger->merge();
 
 =head1 DESCRIPTION
 
@@ -297,12 +295,6 @@ destination file from them and returns its content as a string.
 Ignore the file. Leave it out of the destination tarball:
 
     return { action => "ignore" };
-
-=item *
-
-Throw an error:
-
-    return { action => "error" };
 
 =back
 
