@@ -5,11 +5,13 @@
 use warnings;
 use strict;
 
-use Test::More qw(no_plan);
+use Test::More;
 use Archive::Tar::Merge;
 use Archive::Tar::Wrapper;
 use File::Temp qw(tempdir);
 use Sysadm::Install qw(slurp);
+
+plan tests => 12;
 
 my $tmpdir = tempdir(CLEANUP => 1);
 my $dsttar = "$tmpdir/foo.tgz";
@@ -71,3 +73,21 @@ is(scalar @all_files, 3, "All files contained in tarball");
 is(slurp($tar->locate("a")), "This is the new a.\n", "content of a");
 is(slurp($tar->locate("b")), "This is b.\n", "content of b");
 is(slurp($tar->locate("c")), "This is c.\n", "content of c");
+
+  # Merge two identical tarballs
+$merger = Archive::Tar::Merge->new(
+    source_tarballs => ["$DATA/tar1.tgz", "$DATA/tar1.tgz"],
+    dest_tarball    => $dsttar,
+);
+
+$merger->merge();
+
+$tar = Archive::Tar::Wrapper->new();
+$tar->read($dsttar);
+
+@all_files = @{$tar->list_all()};
+
+is(scalar @all_files, 2, "All files contained in tarball");
+
+is(slurp($tar->locate("a")), "This is a.\n", "content of a");
+is(slurp($tar->locate("b")), "This is b.\n", "content of b");
