@@ -398,12 +398,12 @@ object.
 
 =head2 Using a decider to add multiple files
 
-If you have two tarballs which both have a different version of the
+If you have two tarballs which both have a different version of
 C<path/to/file>, you might want to add these entries as 
 C<path/to/file.1> and C<path/to/file.2> to the outgoing tarball.
 
 Since the decider gets a reference to the outgoing tarball's 
-C<Archive::Tar::Wrapper> object, you can easily do that:
+C<Archive::Tar::Wrapper> object, it can easily do that:
 
     my $merger = Archive::Tar::Merge->new(
         source_tarballs => ["a.tgz", "b.tgz"],
