@@ -74,8 +74,8 @@ sub merge {
     my $out_dir = tempdir(CLEANUP => 1);
     my $out_tar = Archive::Tar::Wrapper->new(tmpdir => $out_dir);
 
-    DEBUG "Merging ", join(', ', @{ $self->{source_tarballs} }),
-          " into $self->{dest_tarball}";
+    DEBUG "Merging tarballs ", 
+          join(', ', @{ $self->{source_tarballs} }), ".";
 
     my $paths     = {};
 
@@ -95,30 +95,6 @@ sub merge {
             my $rel = abs2rel($File::Find::name, $dir);
               # Two down
             $rel =~ s#.*?/.*?/##;
-
-            # Hook
-            if(defined $self->{hook}) {
-
-                my $hook = $self->{hook}->(
-                        $File::Find::name, 
-                        $rel, 
-                        $source);
-
-                if(0) {
-                } elsif(defined $decision->{action}) {
-                    if($decision->{action} eq "ignore") {
-                        DEBUG "Ignoring $relpath per decider";
-                        next;
-                    } else {
-                        LOGDIE "Unknown action from hook: ",
-                               "$hook->{action}";
-                    }
-                } elsif(defined $decision->{content}) {
-                    $dst_content = $decision->{content};
-                } else {
-                    LOGDIE "Decider failed to return decision";
-                }
-            }
 
             my $digest = file_hash($File::Find::name);
     
@@ -154,7 +130,31 @@ sub merge {
         }
 
         if(@digests == 1) {
-            # A unique file. Take it as-is
+
+              # A unique file. Take it as-is, but call the
+              # he hook if there's one defined.
+            if(defined $self->{hook}) {
+                my $hook = $self->{hook}->(
+                    $relpath,
+                    $paths->{$relpath}->{paths},
+                    $out_tar,
+                );
+
+                if(0) {
+                } elsif(defined $hook->{action}) {
+                    if($hook->{action} eq "ignore") {
+                        DEBUG "Ignoring $relpath per hook";
+                        next;
+                    } else {
+                        LOGDIE "Unknown action from hook: ",
+                               "$hook->{action}";
+                    }
+                } elsif(defined $hook->{content}) {
+                    $dst_content = $hook->{content};
+                } else {
+                    # No action from hook, leave the file unmodified
+                }
+            }
 
         } else {
 
@@ -197,12 +197,14 @@ sub merge {
         }
     }
 
-    my $compress = 0;
-    if($self->{dest_tarball} =~ /gz$/) {
-        $compress = 1;
+    if(defined $self->{dest_tarball}) {
+        my $compress = 0;
+        if($self->{dest_tarball} =~ /gz$/) {
+            $compress = 1;
+        }
+    
+        $out_tar->write($self->{dest_tarball}, $compress);
     }
-
-    $out_tar->write($self->{dest_tarball}, $compress);
 
     return $out_tar;
 }
@@ -404,19 +406,22 @@ object.
 
 =head2 Post-processing the outgoing tarball
 
-The C<merge()> method not only merges the source tarballs and writes
-the result into the outgoing tarfile, but also maintains a 
-C<Archive::Tar::Wrapper> object of the result. A reference to it
-is returned by every successful call of C<merge()>:
+If the C<Archive::Tar::Merge> object gets the name of the outgoing
+tarball in its constructor call, its C<merge()> method will write the 
+outgoing tarball into the file specified right after the merge process
+has been completed.
+
+If C<dest_tarball> isn't specified, as in
+
+    my $merger = Archive::Tar::Merge->new(
+        source_tarballs => ["a.tgz", "b.tgz"],
+    );
+
+then writing out the resulting tarball can be done manually by 
+using the C<Archive::Tar::Wrapper> object returned by C<merge()>:
 
      my $out_tar = $merger->merge();
-
-It may be used for post-processing the tarball by adding additional 
-files or perform closing manipulations. After modifying the 
-C<Archive::Tar::Wrapper>, a new tarball can be written by calling
-the C<write()> method:
-
-    $out_tar->write($tarfile, $compressed);
+     $out_tar->write("c.tgz", $compressed);
 
 For more info on what to do with the C<Archive::Tar::Wrapper> object,
 read its documentation.
@@ -424,7 +429,6 @@ read its documentation.
 =head1 TODO
 
 * Copy directories?
-* First decider, then hook?
 * What if an entry is a symlink in one tarball and a file in another?
 * Permissions of target files created by content
 * N different symlinks (hash dst file)
