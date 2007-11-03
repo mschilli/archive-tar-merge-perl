@@ -404,6 +404,35 @@ C<content> parameter.
 A hook also receives a reference to the outgoing C<Archive::Tar::Wrapper>
 object.
 
+=head2 Using a decider to add multiple files
+
+If you have two tarballs which both have a different version of the
+C<path/to/file>, you might want to add these entries as 
+C<path/to/file.1> and C<path/to/file.2> to the outgoing tarball.
+
+Since the decider gets a reference to the outgoing tarball's 
+C<Archive::Tar::Wrapper> object, you can easily do that:
+
+    my $merger = Archive::Tar::Merge->new(
+        source_tarballs => ["a.tgz", "b.tgz"],
+        decider => sub {
+          my($logical_src_path, $candidate_physical_paths, $out_tar) = @_;
+          
+          my $idx = 1;
+          for my $ppath (@$candidate_physical_paths) {
+            $out_tar->add($logical_src_path . ".$idx", $ppath);
+            $idx++;
+          }
+
+          return { action => "ignore" };
+        }
+    );
+
+Note that the decider code not only adds the different versions under
+different paths to the outgoing tarball but also tells the main 
+C<Archive::Tar::Merge> code to ignore the file to prevent it from adding
+yet another version.
+
 =head2 Post-processing the outgoing tarball
 
 If the C<Archive::Tar::Merge> object gets the name of the outgoing
